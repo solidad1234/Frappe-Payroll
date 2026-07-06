@@ -160,7 +160,6 @@ def create_salary_slip(employee_name, base, from_date, to_date, salary_structure
             "payroll_frequency": "Monthly",
             "start_date": from_date,
             "end_date": to_date,
-            "letter_head": "Metrotrans",
             "salary_structure": salary_structure,
             "earnings": earnings,
             "deductions": deductions
@@ -277,7 +276,7 @@ def get_employee_advance(employee_name):
         return employee_advance or 0
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Get Employee Advance Error")
-        return {"error": str(e)}
+        return 0
 
 
 def mark_advances_paid(employee_name):
