@@ -242,3 +242,21 @@ app_license = "mit"
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
 
+
+doc_events = {
+    "Employee Advance": {
+        "on_submit": "custom_payroll.services.payroll.create_journal_entry_for_employee_advance"
+    },
+    "Employee": {
+        "on_update": "custom_payroll.services.payroll.update_salary_structure_assignment",
+        "after_insert": "custom_payroll.services.payroll.create_employee_salary_structure_assignment"
+    },
+    "Salary Slip": {
+        "on_submit": "custom_payroll.services.payroll.create_journal_entry_for_salary_slip",
+        "after_insert": "custom_payroll.services.payroll.salary_slip_after_insert"
+    }
+}
+
+fixtures = [
+    "Custom Field"
+]

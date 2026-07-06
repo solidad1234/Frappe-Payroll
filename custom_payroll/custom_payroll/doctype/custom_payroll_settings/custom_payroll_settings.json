@@ -1,0 +1,78 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-07-06 07:26:54.660182",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "default_salary_structure",
+  "advance_account",
+  "salary_expense_account",
+  "column_break_ztpj",
+  "salary_payable_account",
+  "salary_account"
+ ],
+ "fields": [
+  {
+   "fieldname": "default_salary_structure",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Default Salary Structure",
+   "options": "Salary Structure",
+   "reqd": 1
+  },
+  {
+   "fieldname": "advance_account",
+   "fieldtype": "Link",
+   "label": "Advance Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "salary_expense_account",
+   "fieldtype": "Link",
+   "label": "Salary Expense Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "column_break_ztpj",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "salary_payable_account",
+   "fieldtype": "Link",
+   "label": "Salary Payable Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "salary_account",
+   "fieldtype": "Link",
+   "label": "Salary Account",
+   "options": "Account"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-07-06 07:29:16.867523",
+ "modified_by": "Administrator",
+ "module": "Custom Payroll",
+ "name": "Custom Payroll Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
