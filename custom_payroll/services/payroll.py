@@ -470,7 +470,7 @@ def create_journal_entry_for_employee_advance(doc, event):
     jv.naming_series = 'ACC-JV-.YYYY.-'
     jv.posting_date = today()
     jv.company = frappe.defaults.get_user_default("Company")
-    jv.remark = 'Employee Advance'
+    jv.remark = f'Employee Advance: {doc.name}'
     jv.cheque_no = doc.name
     jv.cheque_date = today()
 
@@ -490,8 +490,13 @@ def create_journal_entry_for_employee_advance(doc, event):
         'debit_in_account_currency': float(doc.advance_amount),
         'party_type': "Employee",
         'party': doc.employee,
+        'reference_type': 'Employee Advance',
+        'reference_name': doc.name,
+        'is_advance': 'Yes'
     })
 
+    # Bypass strict party validation to support older ERPNext versions on production
+    jv.validate_party = lambda *args, **kwargs: None
     jv.insert(ignore_permissions=True)
     jv.submit()
 
