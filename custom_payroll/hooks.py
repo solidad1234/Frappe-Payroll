@@ -253,7 +253,8 @@ doc_events = {
     },
     "Salary Slip": {
         "on_submit": "custom_payroll.services.payroll.create_journal_entry_for_salary_slip",
-        "after_insert": "custom_payroll.services.payroll.salary_slip_after_insert"
+        "after_insert": "custom_payroll.services.payroll.salary_slip_after_insert",
+        "on_cancel": "custom_payroll.services.payroll.cancel_journal_entry_for_salary_slip"
     }
 }
 

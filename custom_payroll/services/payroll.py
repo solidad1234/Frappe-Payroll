@@ -379,77 +379,94 @@ def update_salary_structure_assignment(doc, event):
         return {"status": "Error updating salary structure assignment", "message": str(e)}
 
 
+def is_party_account(account_name):
+    if not account_name:
+        return False
+    account_type = frappe.db.get_value("Account", account_name, "account_type")
+    return account_type in ["Payable", "Receivable"]
+
+
 @frappe.whitelist()
-def create_journal_entry_for_salary_slip(doc, event):
+def create_journal_entry_for_salary_slip(doc, event=None):
+    if isinstance(doc, str):
+        doc = frappe.get_doc("Salary Slip", doc)
     salary_slip_on_submit(doc)
     try:
         settings = frappe.get_doc("Custom Payroll Settings")
         mark_penalties_paid(doc.employee, doc.name)
         mark_advances_paid(doc.employee)
 
-        salary_account = settings.salary_account
+        salary_expense_account = settings.salary_expense_account
+        salary_payable_account = settings.salary_payable_account or settings.salary_account
 
         jv = frappe.new_doc('Journal Entry')
         jv.voucher_type = 'Journal Entry'
         jv.naming_series = 'ACC-JV-.YYYY.-'
         jv.posting_date = today()
         jv.company = doc.company
-        jv.remark = 'Salary Payment'
+        jv.remark = f'Salary Accrual: {doc.employee_name or doc.employee} ({doc.name})'
         jv.cheque_no = doc.name
         jv.cheque_date = today()
         jv.reference_document = "Salary Slip"
         jv.reference_name = doc.name
 
         total_deductions = 0
-        salary_advance_amount = 0
 
+        # DEBIT: Salary Expense Account (Full Gross Pay is the company's expense)
+        expense_row = {
+            'account': salary_expense_account,
+            'debit': doc.gross_pay,
+            'credit': 0,
+            'debit_in_account_currency': doc.gross_pay,
+            'credit_in_account_currency': 0,
+        }
+        if is_party_account(salary_expense_account):
+            expense_row.update({'party_type': "Employee", 'party': doc.employee})
+        jv.append('accounts', expense_row)
+
+        # CREDIT: Deductions (Statutory liabilities & Advance asset clearance)
         for deduction in doc.deductions:
-            if deduction.salary_component == "Salary Advance":
-                salary_advance_amount = deduction.amount
-                break
-
-        adjusted_gross_pay = doc.gross_pay - salary_advance_amount
-
-        jv.append('accounts', {
-            'account': salary_account,
-            'credit': adjusted_gross_pay,
-            'debit': 0,
-            'credit_in_account_currency': adjusted_gross_pay,
-            'debit_in_account_currency': 0,
-        })
-
-        for deduction in doc.deductions:
-            if deduction.amount > 0 and deduction.salary_component != "Salary Advance":
+            if deduction.amount > 0:
                 deduction_account = frappe.get_value(
                     'Salary Component Account',
                     {"parent": deduction.salary_component},
                     "account"
                 )
 
+                if not deduction_account and deduction.salary_component in ["Salary Advance", "Advance"]:
+                    deduction_account = settings.advance_account
+
+                if not deduction_account:
+                    frappe.throw(f"Salary Component '{deduction.salary_component}' does not have an Account linked in Salary Component Account.")
+
                 total_deductions += deduction.amount
 
-                jv.append('accounts', {
+                ded_row = {
                     'account': deduction_account,
-                    'debit': deduction.amount,
-                    'credit': 0,
-                    'debit_in_account_currency': deduction.amount,
-                    'credit_in_account_currency': 0,
-                    'party_type': "Employee",
-                    'party': doc.employee,
-                })
+                    'credit': deduction.amount,
+                    'debit': 0,
+                    'credit_in_account_currency': deduction.amount,
+                    'debit_in_account_currency': 0,
+                }
+                if is_party_account(deduction_account):
+                    ded_row.update({'party_type': "Employee", 'party': doc.employee})
+                jv.append('accounts', ded_row)
 
-        jv.append('accounts', {
-            'account': settings.salary_expense_account,
-            'debit': doc.net_pay,
-            'credit': 0,
-            'debit_in_account_currency': doc.net_pay,
-            'credit_in_account_currency': 0,
-            'party_type': "Employee",
-            'party': doc.employee,
-        })
+        # CREDIT: Net Pay to Salary Payable Account (Liability owed to employee)
+        payable_row = {
+            'account': salary_payable_account,
+            'credit': doc.net_pay,
+            'debit': 0,
+            'credit_in_account_currency': doc.net_pay,
+            'debit_in_account_currency': 0,
+        }
+        if is_party_account(salary_payable_account):
+            payable_row.update({'party_type': "Employee", 'party': doc.employee})
+        jv.append('accounts', payable_row)
 
-        if total_deductions + doc.net_pay != adjusted_gross_pay:
-            frappe.throw("Total debits do not match the adjusted gross pay.")
+        # Verify Debit == Credit balance
+        if round(total_deductions + doc.net_pay, 2) != round(doc.gross_pay, 2):
+            frappe.throw(f"Journal Entry imbalance: Gross Expense Debit ({doc.gross_pay}) does not match Total Credits ({total_deductions + doc.net_pay}).")
 
         jv.insert(ignore_permissions=True)
         jv.submit()
@@ -459,6 +476,36 @@ def create_journal_entry_for_salary_slip(doc, event):
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), f'Error creating journal entry: {e}')
         return {"status": "Error creating journal entry", "message": str(e)}
+
+
+@frappe.whitelist()
+def cancel_journal_entry_for_salary_slip(doc, event=None):
+    """
+    Hook: Automatically cancel linked Journal Entry when a Salary Slip is cancelled.
+    """
+    if isinstance(doc, str):
+        doc = frappe.get_doc("Salary Slip", doc)
+    try:
+        linked_jvs = frappe.get_all(
+            "Journal Entry",
+            filters={"cheque_no": doc.name, "docstatus": 1},
+            pluck="name"
+        )
+        
+        acc_jvs = frappe.get_all(
+            "Journal Entry Account",
+            filters={"reference_type": "Salary Slip", "reference_name": doc.name, "docstatus": 1},
+            pluck="parent"
+        )
+        
+        all_jvs = set(linked_jvs + acc_jvs)
+        for jv_name in all_jvs:
+            jv = frappe.get_doc("Journal Entry", jv_name)
+            if jv.docstatus == 1:
+                jv.cancel()
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), f"Failed to cancel Journal Entry for Salary Slip {doc.name}: {e}")
 
 
 @frappe.whitelist()
@@ -474,20 +521,22 @@ def create_journal_entry_for_employee_advance(doc, event):
     jv.cheque_no = doc.name
     jv.cheque_date = today()
 
+    # DEBIT: Employee Advance Account (Asset / Receivable from Employee)
     jv.append('accounts', {
         'account': settings.advance_account,
-        'credit': float(doc.advance_amount),
-        'debit': float(0),
-        'debit_in_account_currency': float(0),
-        'credit_in_account_currency': float(doc.advance_amount),
-    })
-
-    jv.append('accounts', {
-        'account': doc.advance_account,
         'debit': float(doc.advance_amount),
         'credit': float(0),
-        'credit_in_account_currency': float(0),
         'debit_in_account_currency': float(doc.advance_amount),
+        'credit_in_account_currency': float(0),
+    })
+
+    # CREDIT: Bank / Cash Account (Payment outflow)
+    jv.append('accounts', {
+        'account': doc.advance_account,
+        'credit': float(doc.advance_amount),
+        'debit': float(0),
+        'credit_in_account_currency': float(doc.advance_amount),
+        'debit_in_account_currency': float(0),
         'party_type': "Employee",
         'party': doc.employee,
         'reference_type': 'Employee Advance',
@@ -601,7 +650,7 @@ def _bulk_assign_salary_structures():
 def post_payroll_journal_entry(from_date, to_date):
     try:
         settings = frappe.get_doc("Custom Payroll Settings")
-        salary_account = settings.salary_account
+        salary_payable_account = settings.salary_payable_account or settings.salary_account
         salary_expense_account = settings.salary_expense_account
 
         slips = frappe.get_all(
@@ -634,20 +683,22 @@ def post_payroll_journal_entry(from_date, to_date):
         jv.cheque_date = today()
         jv.reference_document = "Salary Slip"
 
-        jv.append('accounts', {
-            'account': salary_account,
-            'credit': total_net_pay,
-            'debit': 0,
-            'credit_in_account_currency': total_net_pay,
-            'debit_in_account_currency': 0,
-        })
-
+        # DEBIT: Salary Expense Account
         jv.append('accounts', {
             'account': salary_expense_account,
             'debit': total_net_pay,
             'credit': 0,
             'debit_in_account_currency': total_net_pay,
             'credit_in_account_currency': 0,
+        })
+
+        # CREDIT: Salary Payable Account (Liability)
+        jv.append('accounts', {
+            'account': salary_payable_account,
+            'credit': total_net_pay,
+            'debit': 0,
+            'credit_in_account_currency': total_net_pay,
+            'debit_in_account_currency': 0,
         })
 
         jv.insert(ignore_permissions=True)
@@ -726,6 +777,9 @@ def salary_slip_on_submit(doc):
     ERPNext recalculates on submit using only 'base', overriding our
     pre-computed values that include non-taxable allowances.
     """
+    if isinstance(doc, str):
+        doc = frappe.get_doc("Salary Slip", doc)
+
     gross_pay = sum(e.amount for e in doc.earnings)
     total_deduction = sum(d.amount for d in doc.deductions)
     net_pay = gross_pay - total_deduction
